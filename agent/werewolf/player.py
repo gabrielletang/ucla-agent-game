@@ -196,9 +196,9 @@ class WerewolfPlayer:
             text = clip_words(ans.get("message"), MESSAGE_WORDS, MESSAGE_CHARS)
             if not text:
                 raise ValueError("a 'send' decision needs a non-empty message")
-            rec = ans.get("recipient")
-            if mode == "private_to_ally":
-                rec = living_allies[0]
+            # Only the wolves' coordination note is private; everything else is public, whatever the model says
+            # (a live test had the seer privately telling the wolf it had been caught).
+            rec = living_allies[0] if mode == "private_to_ally" else None
             if rec is None:
                 return SendMessage(text)
             if isinstance(rec, bool) or rec not in allowed_recipients:

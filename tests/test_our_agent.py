@@ -379,3 +379,10 @@ def test_model_choosing_a_failing_fake_out_is_sent_back():
     assert "0:1" in calls[0]["slot_0_choices"] and "3:1" in calls[0]["slot_0_choices"]
     foes = calls[1]["board"]["opponent_active"]
     assert all(f["can_use_fake_out_this_turn"] is False for f in foes if f)
+
+
+def test_non_wolf_messages_are_always_public():
+    obs = "Your role: SEER\nInvestigation: Player3 is a WOLF\nDay 2, alive 7/7"
+    agent, _, _ = make_agent(lambda *_: {"decision": "send", "message": "I checked Player3: wolf.", "recipient": 3, "kill_target": None})
+    m = agent.choose_message(ww_state(obs, phase="messaging"), WEREWOLF)
+    assert isinstance(m, SendMessage) and not m.recipients

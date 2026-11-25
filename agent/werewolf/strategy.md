@@ -15,6 +15,10 @@ You keep your team's result even after you die, so play for the TEAM, not for su
 - Never abstain as village: three days without an elimination is a wolf win.
 - Speak concretely: one suspect, one reason taken from votes, deaths or contradictions.
 - Keep messages short (under 40 words) and natural. No meta talk about being an AI.
+- Everyone speaks at the same time. "Player X hasn't said anything yet" is NOT evidence on day 1 or early in a
+  discussion — don't accuse or pile on someone for silence; use votes, deaths and contradictions instead.
+- Never contradict facts you know: if your own check, the death reveals or the vote record says something, your
+  message must be consistent with it.
 - Never reveal your private role info by accident in `reasoning_summary`; it is public.
 
 ## Villager
@@ -27,6 +31,7 @@ You keep your team's result even after you die, so play for the TEAM, not for su
 ## Seer
 - Each night check the most suspicious unchecked living player (or a loud player steering votes).
 - If you find a wolf: claim seer in your FIRST message of the day, name the wolf, and vote for them.
+- Never say you suspect a player your check cleared; say they are confirmed village and build on that.
 - If you only have villager results: stay quiet on day 1; from day 2 on, or if you are being voted out,
   claim and list ALL results — dying with unshared results wastes them.
 - If someone falsely claims seer, counter-claim immediately with your real results.
