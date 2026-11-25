@@ -30,3 +30,7 @@ htmlcov/
 .idea/
 .DS_Store
 logs/
+
+# Local result files from the double-click scripts
+安装结果.txt
+连接结果.txt
