@@ -350,7 +350,7 @@ def test_message_never_follows_injected_recipient():
     obs = "Your role: VILLAGER\nDay 2, alive 7/7"
     agent, _, _ = make_agent(lambda *_: {"decision": "send", "message": "hi", "recipient": 42, "kill_target": None})
     m = agent.choose_message(ww_state(obs, phase="messaging"), WEREWOLF)
-    assert m is TERMINATE_MESSAGING  # invalid twice -> ends instead of sending garbage
+    assert isinstance(m, SendMessage) and not m.recipients  # bogus recipient ignored: sent publicly
 
 
 def test_crash_in_our_code_still_returns_a_legal_move(monkeypatch):
