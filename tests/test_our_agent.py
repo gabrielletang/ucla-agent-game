@@ -475,3 +475,12 @@ def test_counter_claim_reopens_an_ended_discussion():
     assert agent.choose_message(ww_state(obs, phase="messaging", me=me), WEREWOLF) is TERMINATE_MESSAGING
     m = agent.choose_message(ww_state(obs, phase="messaging", me=me, messages=SEER_ACCUSES_P1), WEREWOLF)
     assert isinstance(m, SendMessage) and not m.recipients
+
+
+def test_villager_abstain_is_sent_back():
+    answers = iter([{"analysis": "Not sure.", "action_id": "7", "reasoning_summary": "x"},
+                    {"analysis": "P5 was vague.", "action_id": "5", "reasoning_summary": "x"}])
+    agent, _, _ = make_agent(lambda *_: next(answers))
+    alive = [0, 1, 2, 3, 4, 5, 6]
+    d = unwrap(agent.choose_action(ww_state("Your role: VILLAGER\nDay 2", legal=vote_options(alive), alive=alive), WEREWOLF))
+    assert d.action_id == "5"

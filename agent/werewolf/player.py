@@ -112,6 +112,8 @@ class WerewolfPlayer:
             if aid not in by_id:
                 raise ValueError(f"action_id must be one of {list(by_id)}")
             chosen = by_id[aid]
+            if self.t.role != "wolf" and kind == "day_vote" and "abstain" in (chosen.label or "").lower():
+                raise ValueError("the village must not abstain (3 days without an elimination is a wolf win); vote for your top suspect")
             meant = _target_in_analysis(ans.get("analysis"))
             seat_to_action = {self._seat_of(a): a for a in legal if "abstain" not in (a.label or "").lower()}
             if meant is not None and meant in seat_to_action and meant != self._seat_of(chosen) and not (
@@ -227,6 +229,9 @@ class WerewolfPlayer:
             "reply": "New messages arrived. Reply publicly if it helps your team (answer accusations, back up or challenge a "
                      "claim, steer the vote). If nothing useful to add, choose 'end'.",
         }[mode]
+        if mode != "private_to_ally" and not (self.t.votes or self.t.dead):
+            instructions += (" Reminder: it is the first day and everyone speaks at the same time, so being quiet or 'not "
+                             "contributing' is NOT evidence. Never use it as a reason.")
         if plan and mode != "private_to_ally":
             if plan["counter_claimer"] == me:
                 instructions += (f" WOLF PLAN: P{plan['claimant']} claimed seer and named your team as wolf. COUNTER-CLAIM NOW: say "
