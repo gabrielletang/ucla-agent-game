@@ -8,7 +8,7 @@ from pathlib import Path
 from altruagent import TERMINATE_MESSAGING, GameState, SendMessage, WithReasoning
 
 from ..llm import Brain, clip_words, object_schema
-from .tracker import Tracker
+from .tracker import Tracker, seats_in
 
 STRATEGY = (Path(__file__).with_name("strategy.md")).read_text(encoding="utf-8")
 
@@ -29,7 +29,11 @@ MESSAGE_WORDS = 45
 MESSAGE_CHARS = 300
 
 
-_TARGET_IN_TEXT = re.compile(r"\b(?:vote(?:\s+to\s+eliminate|\s+for|\s+out)?|eliminate|kill|investigate|check)\s+(?:player\s*|p)(\d+)\b", re.I)
+# Only first-person intent counts ("I will vote for P3", "I'm choosing to investigate Player 2"), never a description
+# of someone else's action ("they cast a vote for P2"), which fooled a looser pattern in a live test.
+_TARGET_IN_TEXT = re.compile(
+    r"\bI(?:'ll|\s+will|\s+am\s+going\s+to|'m\s+going\s+to|\s+choose\s+to|'m\s+choosing\s+to|\s+am\s+choosing\s+to|\s+want\s+to)?"
+    r"\s+(?:vote(?:\s+to\s+eliminate|\s+for|\s+out)?|eliminate|kill|investigate|check|target)\s+(?:player\s*|p)\s*(\d+)\b", re.I)
 
 
 def _target_in_analysis(text) -> int | None:
@@ -50,6 +54,7 @@ class WerewolfPlayer:
         self.ended_today = False
         self.seen_at_last_send = 0
         self.agreed_target: int | None = None
+        self.plan_day = None
 
     # -- helpers -----------------------------------------------------------------------
 
@@ -184,7 +189,9 @@ class WerewolfPlayer:
             self.day_key, self.sent_today, self.public_today, self.private_today = key, 0, 0, 0
             self.ended_today, self.seen_at_last_send = False, 0
             self.agreed_target = None
-        if self.ended_today or self.sent_today >= MAX_CHATS_PER_DAY:
+        plan = self.t.counter_claim_plan()
+        plan_due = bool(plan) and self.plan_day != key and self.sent_today < MAX_CHATS_PER_DAY
+        if (self.ended_today and not plan_due) or self.sent_today >= MAX_CHATS_PER_DAY:
             self.ended_today = True
             return TERMINATE_MESSAGING
         today = [m for m in self.t.messages if m["day"] == key and m["from"] != self.t.me]
@@ -194,6 +201,8 @@ class WerewolfPlayer:
         # Decide what kind of message this call is for.
         if living_allies and self.private_today == 0:
             mode = "private_to_ally"
+        elif plan_due:
+            mode = "reply"
         elif self.public_today == 0:
             mode = "opening"
         elif new_since > 0 and self.public_today < MAX_PUBLIC_PER_DAY:
@@ -206,8 +215,9 @@ class WerewolfPlayer:
         recipients = sorted(set(self.t.alive) - {me}) if self.t.alive else sorted(set(self.t.names) - {me})
         instructions = {
             "private_to_ally": f"Send ONE private message to your wolf ally (recipient {living_allies[0] if living_allies else None}) proposing tonight's kill "
-                               "target and which villager to push today. START the message with 'Kill P<seat>.' so the "
-                               "target is unambiguous. Set recipient to your ally's seat and kill_target to that seat.",
+                               "target and which villager to push today. START the message with 'Kill P<seat>.' where <seat> "
+                               f"is a NON-wolf (never yourself P{me} or your ally). recipient is filled in for you; set "
+                               "kill_target to that same seat.",
             "opening": ("Send your opening public message for today (recipient null). Name one suspect and one concrete "
                         "reason taken from votes, deaths or claims." if self.t.votes or self.t.dead else
                         "Send your opening public message (recipient null). It is the FIRST day: nobody has voted, died or had a "
@@ -217,7 +227,6 @@ class WerewolfPlayer:
             "reply": "New messages arrived. Reply publicly if it helps your team (answer accusations, back up or challenge a "
                      "claim, steer the vote). If nothing useful to add, choose 'end'.",
         }[mode]
-        plan = self.t.counter_claim_plan()
         if plan and mode != "private_to_ally":
             if plan["counter_claimer"] == me:
                 instructions += (f" WOLF PLAN: P{plan['claimant']} claimed seer and named your team as wolf. COUNTER-CLAIM NOW: say "
@@ -254,6 +263,11 @@ class WerewolfPlayer:
             # Only the wolves' coordination note is private; everything else is public, whatever the model says
             # (a live test had the seer privately telling the wolf it had been caught).
             rec = living_allies[0] if mode == "private_to_ally" else None
+            if mode == "private_to_ally":
+                proposed = next(iter(seats_in(text)), None)
+                if proposed is None or proposed == me or proposed in self.t.allies:
+                    raise ValueError(f"the message must start with 'Kill P<seat>' naming a NON-wolf; P{me} (you) and "
+                                     f"{', '.join('P' + str(a) for a in sorted(self.t.allies))} (your ally) are wolves")
             if rec is None:
                 return SendMessage(text)
             if isinstance(rec, bool) or rec not in allowed_recipients:
@@ -282,6 +296,9 @@ class WerewolfPlayer:
                 self.agreed_target = kt
         else:
             self.public_today += 1
+            if plan:
+                self.plan_day = key
+                self.ended_today = False
         to = f"P{value.recipients[0]}" if value.recipients else "everyone"
         self.log(f"[werewolf] message to {to}: {value.content}")
         return value

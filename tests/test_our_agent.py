@@ -446,3 +446,32 @@ def test_action_follows_the_analysis_when_they_disagree():
     alive = [0, 1, 2, 3, 4, 5, 6]
     d = unwrap(agent.choose_action(ww_state("Your role: VILLAGER\nDay 2", legal=vote_options(alive), alive=alive), WEREWOLF))
     assert d.action_id == "4" and any("following the analysis" in l for l in lines)
+
+
+def test_analysis_override_only_on_first_person_intent():
+    from agent.werewolf.player import _target_in_analysis
+    assert _target_in_analysis("They cast a vote for Player2, which is odd. Investigating Player3 is crucial.") is None
+    assert _target_in_analysis("P4's suggestion to vote for P2 feels like a diversion.") is None
+    assert _target_in_analysis("Given all that, I will vote for Player 4.") == 4
+    assert _target_in_analysis("I'm choosing to investigate P3 tonight.") == 3
+
+
+def test_private_note_proposing_to_kill_a_wolf_is_rejected():
+    obs = "Your role: WEREWOLF\nYour fellow wolves: Player2\nDay 1"
+    answers = iter([{"decision": "send", "message": "Kill P2. Push P0.", "recipient": 2, "kill_target": 2},
+                    {"decision": "send", "message": "Kill P5. Push P0.", "recipient": 2, "kill_target": 5}])
+    agent, _, _ = make_agent(lambda *_: next(answers))
+    m = agent.choose_message(ww_state(obs, phase="messaging", me=4, day=1), WEREWOLF)
+    assert m.recipients == [2] and m.content.startswith("Kill P5")
+
+
+def test_counter_claim_reopens_an_ended_discussion():
+    obs = WOLF_OBS
+    agent, _, _ = make_agent(lambda p, n, s: {"decision": "send", "message": "msg", "recipient": None, "kill_target": None}
+                             if p["mode"] != "private_to_ally" else {"decision": "send", "message": "Kill P6.", "recipient": 1, "kill_target": 6})
+    me = 3
+    agent.choose_message(ww_state(obs, phase="messaging", me=me), WEREWOLF)   # private
+    agent.choose_message(ww_state(obs, phase="messaging", me=me), WEREWOLF)   # opening
+    assert agent.choose_message(ww_state(obs, phase="messaging", me=me), WEREWOLF) is TERMINATE_MESSAGING
+    m = agent.choose_message(ww_state(obs, phase="messaging", me=me, messages=SEER_ACCUSES_P1), WEREWOLF)
+    assert isinstance(m, SendMessage) and not m.recipients
