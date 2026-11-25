@@ -191,10 +191,10 @@ def test_turn_code_plan_is_sensible_and_model_sees_damage_numbers():
     agent.choose_action(draft_state(), POKEMON)  # learn the sets
     decision = unwrap(agent.choose_action(turn_state(), POKEMON))
     payload = seen["payload"]
-    slot1 = payload["slots"][1]["options"]
-    eq = next(o for o in slot1 if o.get("move") == "Earthquake")
-    assert any("ALLY" in h["is"] for row in eq["targets"] for h in row.get("hits", [])), "Earthquake must warn it hits the ally"
-    assert eq["targets"][0]["hits"][1]["est_damage_pct_of_current_hp"] == 0  # Rotom-Wash: Levitate
+    eq = next(d for d in payload["slot_1_choices"].values() if d.startswith("Earthquake"))
+    assert "YOUR ALLY" in eq, "Earthquake must warn it hits the ally"
+    assert "Rotom-Wash ~0%" in eq  # Levitate
+    assert payload["code_baseline"]["slot_0"] in payload["slot_0_choices"]
     assert decision["type"] == "doubles_turn"
     # Turn 1: Fake Out or a strong Fire move from Incineroar; never target own ally.
     assert decision["slot_0"]["type"] == "move" and decision["slot_0"].get("target") in (1, 2)
@@ -210,9 +210,8 @@ def test_fake_out_is_marked_as_failing_after_first_turn():
                                                                 "reasoning_summary": "x"})
     agent.choose_action(turn_state(turn=1), POKEMON)
     agent.choose_action(turn_state(turn=2), POKEMON)
-    fake_out_t2 = next(o for o in seen[1]["slots"][0]["options"] if o.get("move") == "Fake Out")
-    assert "FAIL" in fake_out_t2["note"]
-    assert fake_out_t2["value"] < 0
+    fake_out_t2 = [d for d in seen[1]["slot_0_choices"].values() if d.startswith("Fake Out")]
+    assert fake_out_t2 and all("FAIL" in d for d in fake_out_t2)
 
 
 def test_turn_falls_back_to_code_plan_and_skips_model_when_bank_is_low():
@@ -225,8 +224,7 @@ def test_turn_falls_back_to_code_plan_and_skips_model_when_bank_is_low():
 
 
 def test_model_answer_targeting_illegal_target_is_rejected_then_code_plan_played():
-    agent, provider, _ = make_agent(lambda *_: {"slot_0": {"option": 1, "target": 7}, "slot_1": {"option": 0, "target": None},
-                                                "reasoning_summary": "x"})
+    agent, provider, _ = make_agent(lambda *_: {"slot_0": "1:7", "slot_1": "0:null", "reasoning_summary": "x"})
     decision = unwrap(agent.choose_action(turn_state(), POKEMON))
     assert decision["type"] == "doubles_turn" and len(provider.requests) == 2
 
@@ -370,7 +368,7 @@ def test_model_choosing_a_failing_fake_out_is_sent_back():
     def answer(p, n, s):
         calls.append(p)
         if len(calls) == 2:  # turn 2, first try: Fake Out (fails after turn 1)
-            return {"analysis": "x", "slot_0": {"option": 0, "target": 1}, "slot_1": p["code_baseline"]["slot_1"], "reasoning_summary": "x"}
+            return {"analysis": "x", "slot_0": "0:1", "slot_1": p["code_baseline"]["slot_1"], "reasoning_summary": "x"}
         return {"analysis": "x", "slot_0": p["code_baseline"]["slot_0"], "slot_1": p["code_baseline"]["slot_1"], "reasoning_summary": "x"}
 
     agent, provider, lines = make_agent(answer)
@@ -378,6 +376,6 @@ def test_model_choosing_a_failing_fake_out_is_sent_back():
     decision = unwrap(agent.choose_action(turn_state(turn=2), POKEMON))
     assert decision["slot_0"]["move_id"] != "fakeout"
     assert any("known-bad" in l for l in lines)
-    assert all("valid_targets" in o for o in calls[0]["slots"][0]["options"])
+    assert "0:1" in calls[0]["slot_0_choices"] and "3:1" in calls[0]["slot_0_choices"]
     foes = calls[1]["board"]["opponent_active"]
     assert all(f["can_use_fake_out_this_turn"] is False for f in foes if f)

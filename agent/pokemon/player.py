@@ -36,7 +36,8 @@ Predict the opponent's most likely moves (Protect on a threatened slot, switchin
 Fake Out ONLY if `can_use_fake_out_this_turn` is true, focus fire on your weaker slot) and choose the line that does best
 against that prediction. Focus fire to remove threats, respect speed order, never hit your own ally unless it is immune.
 Write `analysis` FIRST (max 60 words: the opponent's likely moves, then your plan), then the decision.
-For each slot, `target` must be one of that option's `valid_targets` (use null when it is [null])."""
+Each slot has a menu of choice ids ("option:target"), each described in words with the code's numbers. Copy one id per slot.
+Make sure the choice you pick matches what your analysis says."""
 
 DRAFT_SHORTLIST = 6
 SUPPORT_TAGS = {"redirection", "speed control (Tailwind)", "Trick Room", "sleep", "Intimidate", "Fake Out (flinch turn 1)"}
@@ -209,33 +210,44 @@ class PokemonPlayer:
         budget = min(TURN_MAX_SECONDS, decision_left - TURN_SAFETY_SECONDS, bank_left / 7) - (time.monotonic() - started)
         result, ans = None, None
         if budget >= 3.0:
+            menus = [_slot_menu(rows) for rows in annotated]
+            while len(menus) < 2:
+                menus.append({"null:null": "pass"})
+            baseline = {f"slot_{i}": _choice_id(plan[f"slot_{i}"]) for i in (0, 1)}
+            for i in (0, 1):
+                menus[i].setdefault(baseline[f"slot_{i}"], "code baseline choice")
             payload = {
                 "decision": "doubles_turn",
                 "board": analysis.board(),
                 "time": {"decision_seconds_left": decision_left, "bank_seconds_left": bank_left},
-                "slots": [
-                    {"slot": i, "force_switch": bool(s.get("force_switch")), "options": annotated[i]}
-                    for i, s in enumerate(analysis.slots)
-                ],
-                "targets_legend": "1/2 = opponent positions A/B; -1 = your slot 0, -2 = your slot 1; null = no target needed",
-                "code_baseline": plan,
-                "answer_format": "For slot_0 and slot_1 give the option index from that slot's options and, for a move "
-                                 "with targets, one of its listed target integers (else null).",
+                "slot_0_choices": menus[0],
+                "slot_1_choices": menus[1],
+                "code_baseline": baseline,
+                "answer_format": "Pick one choice id for slot_0 and one for slot_1, copied exactly from the lists.",
             }
-            slot_schema = object_schema({"option": {"type": "integer"}, "target": {"type": ["integer", "null"]}})
+
             def build(ans):
-                value = choice.build(ans)
+                picks = {}
                 for i in (0, 1):
-                    pick = ans.get(f"slot_{i}") or {}
+                    cid = str(ans.get(f"slot_{i}"))
+                    if cid not in menus[i]:
+                        raise ValueError(f"slot_{i} must be one of {list(menus[i])}")
+                    opt, tgt = cid.split(":")
+                    picks[f"slot_{i}"] = {"option": None if opt == "null" else int(opt),
+                                          "target": None if tgt == "null" else int(tgt)}
                     rows = annotated[i] if i < len(annotated) else []
-                    row = next((r for r in rows if r["option"] == pick.get("option")), None)
-                    if row and row.get("value", 0) <= -0.45 and pick.get("option") != plan[f"slot_{i}"]["option"]:
-                        raise ValueError(f"slot_{i} option {pick.get('option')} is a known-bad move here "
+                    row = next((r for r in rows if r["option"] == picks[f"slot_{i}"]["option"]), None)
+                    if row and row.get("value", 0) <= -0.45 and cid != baseline[f"slot_{i}"]:
+                        raise ValueError(f"slot_{i} choice {cid} is a known-bad move here "
                                          f"({row.get('note') or 'it hits your own side or fails'}); pick another")
-                return value
+                if len(annotated) < 2:
+                    picks["slot_1"] = plan["slot_1"]
+                return choice.build(picks)
 
             result, ans = self.brain.ask(kind="doubles_turn", system=SYSTEM, payload=payload,
-                                         schema=object_schema({"analysis": {"type": "string"}, "slot_0": slot_schema, "slot_1": slot_schema,
+                                         schema=object_schema({"analysis": {"type": "string"},
+                                                               "slot_0": {"type": "string", "enum": list(menus[0])},
+                                                               "slot_1": {"type": "string", "enum": list(menus[1])},
                                                                "reasoning_summary": {"type": "string"}}),
                                          build=build, budget=budget)
         else:
@@ -249,3 +261,47 @@ class PokemonPlayer:
         same = result == plan_action
         self.log(f"[pokemon] turn {analysis.turn}: {result['slot_0']} | {result['slot_1']} ({'= code plan' if same else 'model overrode code plan'}) | {ans.get('analysis', '')}")
         return WithReasoning(result, str(ans.get("reasoning_summary") or "")[:200])
+
+
+ALLY_FRIENDLY_ATTACKS = {"pollenpuff", "beatup"}
+
+
+def _choice_id(pick: dict) -> str:
+    opt, tgt = pick.get("option"), pick.get("target")
+    return f"{'null' if opt is None else opt}:{'null' if tgt is None else tgt}"
+
+
+def _slot_menu(rows: list[dict]) -> dict[str, str]:
+    """Every legal (option, target) pair for one slot, described in plain words with the code's estimates."""
+    menu: dict[str, str] = {}
+    for r in rows:
+        kind = r.get("kind")
+        if kind == "switch":
+            menu[f"{r['option']}:null"] = (f"SWITCH to {r['switch_to']} ({r.get('hp_pct')}% HP; its best hit on foes "
+                                          f"~{r.get('its_best_hit_on_foes_pct')}%, foes' best hit on it ~{r.get('foes_best_hit_on_it_pct')}%)")
+            continue
+        if kind != "move":
+            menu[f"{r['option']}:null"] = kind.upper() if kind else "pass"
+            continue
+        name = r.get("move")
+        base = f"{name} [{r.get('type')}, {r.get('category')}, BP {r.get('base_power')}" + (f", priority +{r['priority']}" if r.get("priority") else "") + "]"
+        note = f" NOTE: {r['note']}." if r.get("note") else ""
+        by_target = {t.get("target"): t for t in r.get("targets", [])}
+        for tgt in r.get("valid_targets") or [None]:
+            t = by_target.get(tgt, {})
+            if "hits" in t:  # spread move
+                parts = [f"{h['is']} ~{h.get('est_damage_pct_of_current_hp', 0)}% of current HP" + (" KO" if h.get("likely_ko") else "")
+                         for h in t["hits"]]
+                desc = f"{base} hits " + "; ".join(parts) if parts else base
+            elif "est_damage_pct_of_current_hp" in t:
+                if str(t.get("is", "")).startswith("YOUR") and to_id(name) not in ALLY_FRIENDLY_ATTACKS:
+                    continue  # attacking your own ally is almost never right; keep the menu clean
+                desc = (f"{base} → {t['is']}: ~{t['est_damage_pct_of_current_hp']}% of its current HP"
+                        + (", likely KO" if t.get("likely_ko") else "") + (f", effectiveness x{t['effectiveness']}" if t.get("effectiveness", 1) != 1 else "")
+                        + (", may be immune (ability)" if t.get("maybe_immune_by_ability") else ""))
+            elif t.get("is"):
+                desc = f"{base} → {t['is']}"
+            else:
+                desc = base
+            menu[f"{r['option']}:{'null' if tgt is None else tgt}"] = desc + note
+    return menu
