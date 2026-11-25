@@ -408,3 +408,41 @@ def test_deductions_flag_voters_of_the_real_seer_and_hide_seer_on_day1():
     agent2, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"decision": "send", "message": "hi", "recipient": None, "kill_target": None})
     agent2.choose_message(ww_state("Your role: SEER\nInvestigation: Player4 is a VILLAGER\nDay 1", phase="messaging", day=1), WEREWOLF)
     assert "do NOT reveal that you are the seer" in seen[0]["instructions"]
+
+
+WOLF_OBS = "Your role: WEREWOLF\nYour fellow wolves: Player1\nDay 2, alive 7/7"
+SEER_ACCUSES_P1 = [(5, [], "I am the seer. I checked Player1 last night: Player1 is a WOLF.")]
+
+
+def _capture_instructions(me):
+    seen = []
+    agent, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"decision": "send", "message": "ok", "recipient": None, "kill_target": None})
+    obs = WOLF_OBS if me == 3 else WOLF_OBS.replace("Player1", "Player3")
+    agent.choose_message(ww_state(obs, phase="messaging", me=me, messages=SEER_ACCUSES_P1), WEREWOLF)  # private note
+    agent.choose_message(ww_state(obs, phase="messaging", me=me), WEREWOLF)  # public opening
+    return seen[-1]["instructions"], agent
+
+
+def test_unaccused_wolf_counter_claims_and_accused_wolf_backs_up():
+    # Wolves are P1 and P3; seer claimant P5 named P1. P3 (not accused) counter-claims; P1 backs up.
+    unaccused, _ = _capture_instructions(me=3)
+    assert "COUNTER-CLAIM NOW" in unaccused and "P5" in unaccused
+    accused, _ = _capture_instructions(me=1)
+    assert "Do NOT claim seer yourself" in accused and "P3" in accused
+
+
+def test_wolves_kill_the_seer_claimant_first():
+    agent, _, _ = make_agent(failing)
+    me = 3
+    agent.choose_message(ww_state(WOLF_OBS, phase="messaging", me=me,
+                                  messages=SEER_ACCUSES_P1 + [(1, [3], "Kill P2. Push P6.")]), WEREWOLF)
+    kill = ww_state(WOLF_OBS, sub_phase="night_wolf", me=me, legal=[(i, f"Kill Player{i}") for i in (0, 2, 4, 5, 6)])
+    assert unwrap(agent.choose_action(kill, WEREWOLF)).action_id == "5"
+
+
+def test_action_follows_the_analysis_when_they_disagree():
+    agent, _, lines = make_agent(lambda *_: {"analysis": "P4 lied about his vote. I'm choosing to vote for Player 4.",
+                                             "action_id": "2", "reasoning_summary": "x"})
+    alive = [0, 1, 2, 3, 4, 5, 6]
+    d = unwrap(agent.choose_action(ww_state("Your role: VILLAGER\nDay 2", legal=vote_options(alive), alive=alive), WEREWOLF))
+    assert d.action_id == "4" and any("following the analysis" in l for l in lines)

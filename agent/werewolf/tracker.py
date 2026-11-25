@@ -40,6 +40,7 @@ class Tracker:
         self.messages: list[dict] = []       # {"day", "from", "to", "text"}
         self.seen_message_ids: set[int] = set()
         self.claims: dict[int, list[str]] = defaultdict(list)
+        self.accusations: dict[int, set[int]] = defaultdict(set)  # seer claimant -> seats they called wolf
         self.day = 0
         self.sub_phase = None
         self.alive: list[int] = []
@@ -101,8 +102,13 @@ class Tracker:
             self.seen_message_ids.add(m.index)
             entry = {"day": self.day, "from": m.sender, "to": list(m.recipients) or "everyone", "text": m.content}
             self.messages.append(entry)
-            if m.sender != self.me and SEER_CLAIM.search(m.content or "") and "seer" in (m.content or "").lower():
+            text = m.content or ""
+            if m.sender != self.me and SEER_CLAIM.search(text) and "seer" in text.lower():
                 self.claims[m.sender].append(f"day {self.day}: claims seer")
+            if m.sender != self.me and m.sender in self.claims and re.search(r"\bwolf\b|werewolf", text, re.I):
+                named = [n for n in seats_in(text) if n != m.sender]
+                if named:
+                    self.accusations[m.sender].add(named[0])
             if m.recipients and m.sender in self.allies:
                 self.ally_proposals.append(entry)
 
@@ -236,6 +242,7 @@ class Tracker:
             "dead": [f"P{d['seat']} ({d['role']}, {d['cause']}, day {d['day']})" for d in self.dead],
             "votes_by_day": dict(vote_lines),
             "seer_claims": {f"P{k}": v for k, v in self.claims.items()},
+            "seer_claimants_called_wolf": {f"P{k}": [f"P{x}" for x in sorted(v)] for k, v in self.accusations.items()},
             "parity": self.parity(),
             "code_suspicion_ranking": [f"P{s} ({round(v, 1)})" for s, v in sorted(susp.items(), key=lambda kv: -kv[1])],
             "votes_for_later_revealed_villagers": {f"P{s}": sum(1 for v in self.votes if v["voter"] == s and rev.get(v["target"]) in ("villager", "seer")) for s in self.alive if s != self.me},
@@ -266,3 +273,27 @@ class Tracker:
     def transcript(self, limit: int = 40) -> list[dict]:
         return [{"day": m["day"], "from": f"P{m['from']}", "to": "everyone" if m["to"] == "everyone" else [f"P{r}" for r in m["to"]],
                  "text": m["text"]} for m in self.messages[-limit:]]
+
+
+    # -- wolf helpers ---------------------------------------------------------------------
+
+    def wolves_alive(self) -> list[int]:
+        team = ({self.me} | self.allies) if self.me is not None else set(self.allies)
+        return sorted(w for w in team if w in self.alive or not self.alive)
+
+    def hostile_seer_claimants(self) -> list[int]:
+        """Living non-wolf players claiming seer (for a wolf: the real seer or a bluffer, either way the target)."""
+        return sorted(s for s, c in self.claims.items() if c and s in self.alive and s not in self.allies and s != self.me)
+
+    def counter_claim_plan(self) -> dict | None:
+        """If a seer claimant named one of us as a wolf, decide (deterministically, so both wolves agree) who counter-claims."""
+        if self.role != "wolf":
+            return None
+        wolves = set(self.wolves_alive())
+        for claimant in self.hostile_seer_claimants():
+            accused = self.accusations.get(claimant, set()) & wolves
+            if accused:
+                unaccused = sorted(wolves - accused)
+                who = unaccused[0] if unaccused else sorted(wolves)[0]
+                return {"claimant": claimant, "accused": sorted(accused), "counter_claimer": who}
+        return None

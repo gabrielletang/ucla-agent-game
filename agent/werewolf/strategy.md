@@ -46,8 +46,11 @@ You keep your team's result even after you die, so play for the TEAM, not for su
   if they made one first.
 - Day: blend in. Vote with the likely majority as long as it is not your ally. Never vote for your ally
   unless their elimination is already certain and voting otherwise would expose you.
-- If a seer claims and names you or your ally: counter-claim seer, say you checked the accuser
-  and they are the wolf. Be confident and specific.
+- If a seer claims and names you or your ally: exactly ONE wolf counter-claims seer (the code tells you
+  who in `wolf_plan` / the instructions). The counter-claimer says they checked the accuser and the accuser is
+  the wolf, plus one believable "villager" result. The other wolf backs it up as a villager.
+- A living seer claimant is the night-kill target, ahead of any other plan.
+- Never vote for or push suspicion onto your own team (`wolf_team`). Make your action match your analysis.
 - Push suspicion onto villagers who have weak records; avoid accusing confirmed-good players.
 - When wolves alive are one away from parity, a no-elimination day (tie/abstain) can also win via the
   three-day rule — but only steer toward it if it looks natural.

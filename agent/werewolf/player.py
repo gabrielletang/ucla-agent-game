@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from altruagent import TERMINATE_MESSAGING, GameState, SendMessage, WithReasoning
@@ -26,6 +27,15 @@ MAX_CHATS_PER_DAY = 4          # server allows 5; keep one spare
 MAX_PUBLIC_PER_DAY = 3
 MESSAGE_WORDS = 45
 MESSAGE_CHARS = 300
+
+
+_TARGET_IN_TEXT = re.compile(r"\b(?:vote(?:\s+to\s+eliminate|\s+for|\s+out)?|eliminate|kill|investigate|check)\s+(?:player\s*|p)(\d+)\b", re.I)
+
+
+def _target_in_analysis(text) -> int | None:
+    """The seat the analysis says it will act on (last 'vote for / kill / investigate P<n>' phrase), if any."""
+    hits = _TARGET_IN_TEXT.findall(str(text or ""))
+    return int(hits[-1]) if hits else None
 
 
 class WerewolfPlayer:
@@ -77,6 +87,13 @@ class WerewolfPlayer:
         extra = {"legal_options": options, "code_baseline_from_vote_record": fallback.action_id,
                  "answer_format": "Write `analysis` first (max 60 words: who you think the wolves are and why, from the "
                                   "facts and the chat), then choose. The baseline only counts votes; it cannot read the chat."}
+        if self.t.role == "wolf":
+            plan = self.t.counter_claim_plan()
+            extra["wolf_team"] = [f"P{w}" for w in self.t.wolves_alive()]
+            extra["never_target"] = "your own wolf team (listed in wolf_team)"
+            if plan and kind == "day_vote":
+                extra["wolf_plan"] = (f"P{plan['claimant']} claimed seer and named {', '.join('P' + str(a) for a in plan['accused'])} "
+                                      f"as wolf. Our team says P{plan['claimant']} is the fake seer: vote P{plan['claimant']}.")
         if kind == "night_kill":
             target = self._coordinated_target(legal)
             extra["ally_private_messages"] = [m["text"] for m in self.t.ally_proposals[-4:]]
@@ -89,7 +106,14 @@ class WerewolfPlayer:
             aid = str(ans.get("action_id"))
             if aid not in by_id:
                 raise ValueError(f"action_id must be one of {list(by_id)}")
-            return by_id[aid]
+            chosen = by_id[aid]
+            meant = _target_in_analysis(ans.get("analysis"))
+            seat_to_action = {self._seat_of(a): a for a in legal if "abstain" not in (a.label or "").lower()}
+            if meant is not None and meant in seat_to_action and meant != self._seat_of(chosen) and not (
+                    self.t.role == "wolf" and meant in self.t.allies):
+                self.log(f"[werewolf] {kind}: analysis says P{meant} but action was {chosen.label}; following the analysis")
+                chosen = seat_to_action[meant]
+            return chosen
 
         value, ans = self.brain.ask(kind=kind, system=SYSTEM, payload=self._payload(state, kind, extra),
                                     schema=object_schema({"analysis": {"type": "string"},
@@ -124,13 +148,22 @@ class WerewolfPlayer:
             pool = unchecked or seats
             return max(pool, key=lambda x: (susp.get(x[1], 0), -x[1]))[0]
         if self.t.role == "wolf":
+            plan = self.t.counter_claim_plan()
+            if plan:
+                hit = next((a for a, s in seats if s == plan["claimant"]), None)
+                if hit:
+                    return hit
             non_allies = [(a, s) for a, s in seats if s not in self.t.allies] or seats
             return max(non_allies, key=lambda x: (susp.get(x[1], 0), -x[1]))[0]
         return max(seats, key=lambda x: (susp.get(x[1], 0), -x[1]))[0]
 
     def _coordinated_target(self, legal) -> int | None:
-        """Deterministic wolf agreement: the lower-seat wolf's proposal wins, so both wolves compute the same answer."""
+        """Deterministic wolf agreement. A living seer claimant (public info, so both wolves see it) comes first;
+        otherwise the lower-seat wolf's proposal wins."""
         legal_seats = {self._seat_of(a) for a in legal}
+        claimants = [c for c in self.t.hostile_seer_claimants() if c in legal_seats]
+        if claimants:
+            return claimants[0]
         ally_target = None
         if self.t.ally_proposals:
             last = self.t.ally_proposals[-1]
@@ -184,6 +217,20 @@ class WerewolfPlayer:
             "reply": "New messages arrived. Reply publicly if it helps your team (answer accusations, back up or challenge a "
                      "claim, steer the vote). If nothing useful to add, choose 'end'.",
         }[mode]
+        plan = self.t.counter_claim_plan()
+        if plan and mode != "private_to_ally":
+            if plan["counter_claimer"] == me:
+                instructions += (f" WOLF PLAN: P{plan['claimant']} claimed seer and named your team as wolf. COUNTER-CLAIM NOW: say "
+                                 f"YOU are the real seer, that you checked P{plan['claimant']} and they are the WOLF, and give one "
+                                 f"believable extra 'villager' result on a living non-wolf. Be confident and specific.")
+            else:
+                instructions += (f" WOLF PLAN: P{plan['claimant']} claimed seer and named your team. Your ally P{plan['counter_claimer']} "
+                                 f"is the one who counter-claims seer. Back them up calmly as a 'villager' and point out "
+                                 f"weaknesses in P{plan['claimant']}'s story. Do NOT claim seer yourself.")
+        if mode == "private_to_ally":
+            claimants = self.t.hostile_seer_claimants()
+            instructions += (f" Never propose pushing suspicion onto yourself (P{me}) or your ally. "
+                             + (f"P{claimants[0]} claimed seer: propose killing P{claimants[0]} tonight." if claimants else ""))
         if self.t.role == "seer" and "wolf" not in self.t.checks.values() and not (self.t.votes or self.t.dead):
             instructions += (" You are the SEER but have only villager results so far: do NOT reveal that you are the seer "
                              "today and do not mention your check. Talk like an ordinary villager.")
