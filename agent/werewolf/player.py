@@ -74,7 +74,9 @@ class WerewolfPlayer:
         by_id = {a.action_id: a for a in legal}
         fallback = self._fallback(legal, sub)
         kind = {"night_wolf": "night_kill", "night_seer": "investigate", "day_vote": "day_vote"}.get(sub, "choose_action")
-        extra = {"legal_options": options, "code_suggestion": fallback.action_id}
+        extra = {"legal_options": options, "code_baseline_from_vote_record": fallback.action_id,
+                 "answer_format": "Write `analysis` first (max 60 words: who you think the wolves are and why, from the "
+                                  "facts and the chat), then choose. The baseline only counts votes; it cannot read the chat."}
         if kind == "night_kill":
             target = self._coordinated_target(legal)
             extra["ally_private_messages"] = [m["text"] for m in self.t.ally_proposals[-4:]]
@@ -90,13 +92,14 @@ class WerewolfPlayer:
             return by_id[aid]
 
         value, ans = self.brain.ask(kind=kind, system=SYSTEM, payload=self._payload(state, kind, extra),
-                                    schema=object_schema({"action_id": {"type": "string", "enum": list(by_id)},
+                                    schema=object_schema({"analysis": {"type": "string"},
+                                                          "action_id": {"type": "string", "enum": list(by_id)},
                                                           "reasoning_summary": {"type": "string"}}),
                                     build=build, budget=60)
         if value is None:
             self.log(f"[werewolf] {kind}: FALLBACK to code choice {fallback.label}")
             return WithReasoning(fallback, "Acting on the voting record.")
-        self.log(f"[werewolf] {kind}: {value.label} (code suggested {fallback.label})")
+        self.log(f"[werewolf] {kind}: {value.label} (code baseline {fallback.label}) | {ans.get('analysis', '')}")
         return WithReasoning(value, str(ans.get("reasoning_summary") or "")[:200])
 
     def _fallback(self, legal, sub):

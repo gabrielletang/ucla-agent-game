@@ -25,7 +25,11 @@ likely KOs, speed estimates) and a recommended choice. Treat the numbers as good
 Think like a VGC expert: focus fire to remove threats, respect speed order and priority, use Protect when a slot is
 the obvious target, use Fake Out only on a Pokémon's first turn out, never hit your own ally unless it is immune or
 the trade is clearly worth it, avoid wasting moves into immunities, keep win conditions alive.
-Follow the recommendation unless you see a concrete reason to deviate.
+The code's numbers and its baseline choice IGNORE what the opponent will do this turn. That is your job:
+predict the opponent's most likely moves (Protect on a threatened slot, Fake Out, switching out of a bad matchup,
+priority moves, Trick Room/Tailwind turns, focus fire on your weaker slot) and choose the line that does best against
+that prediction. Agree with the baseline only when your own analysis lands there.
+Write `analysis` FIRST (max 60 words: what the opponent will likely do, and your plan), then the decision.
 reasoning_summary is PUBLIC (the opponent may read it): one short sentence, no secret plans."""
 
 DRAFT_SHORTLIST = 6
@@ -95,9 +99,10 @@ class PokemonPlayer:
             "my_roster": [public(p) for p in mine],
             "opponent_roster": [public(p) for p in opp],
             "candidates_ranked_by_code": [public(p) for p in shortlist],
-            "code_recommendation": shortlist[0]["card_id"],
-            "guidance": "Build a TEAM: cover shared weaknesses, mix physical and special, have speed control and "
-                        "Fake Out/Intimidate support. Also consider denying a card the opponent clearly needs.",
+            "code_baseline": shortlist[0]["card_id"],
+            "guidance": "code_score is a rough single-number heuristic. Decide with a TEAM plan in mind (e.g. Trick Room, "
+                        "Tailwind offense, weather, balance): cover shared weaknesses, mix physical and special, keep speed "
+                        "control and Fake Out/Intimidate support, and consider denying a card the opponent clearly needs.",
         }
         ids = [p["card_id"] for p in shortlist]
 
@@ -111,14 +116,15 @@ class PokemonPlayer:
             self.log("[pokemon] draft: no time for the model, playing code pick")
             return WithReasoning(fallback, "Best available fit for the team.")
         value, ans = self.brain.ask(kind="draft_pick", system=SYSTEM, payload=payload,
-                                    schema=object_schema({"card_id": {"type": "string", "enum": ids},
+                                    schema=object_schema({"analysis": {"type": "string"},
+                                                          "card_id": {"type": "string", "enum": ids},
                                                           "reasoning_summary": {"type": "string"}}),
                                     build=build, budget=budget)
         if value is None:
             self.log(f"[pokemon] draft: FALLBACK to code pick {shortlist[0]['species']}")
             return WithReasoning(fallback, "Best available fit for the team.")
         pick = next(p for p in shortlist if p["card_id"] == value.action_id.split(":", 1)[1])
-        self.log(f"[pokemon] draft: picked {pick['species']} (code #1 was {shortlist[0]['species']})")
+        self.log(f"[pokemon] draft: picked {pick['species']} (code #1 was {shortlist[0]['species']}) | {ans.get('analysis', '')}")
         return WithReasoning(value, str(ans.get("reasoning_summary") or "")[:200])
 
     # -- team preview ----------------------------------------------------------------
@@ -161,17 +167,18 @@ class PokemonPlayer:
                                 for n, m in zip(opp_names, opp_mons)],
             "matchups": "matrix[my_i][their_j] = {deal: my best hit on them, take: their best hit on me (fraction of max HP), outspeeds}",
             "matrix": matrix,
-            "code_recommendation": rec,
+            "code_baseline": rec,
+            "guidance": "Think about which 2 of their Pokémon they are most likely to lead with and pick leads that beat that.",
         }
         schema_species = {"type": "array", "items": {"type": "string", "enum": roster}}
         value, ans = self.brain.ask(kind="select_lineup", system=SYSTEM, payload=payload,
-                                    schema=object_schema({"bring": schema_species, "leads": schema_species,
+                                    schema=object_schema({"analysis": {"type": "string"}, "bring": schema_species, "leads": schema_species,
                                                           "reasoning_summary": {"type": "string"}}),
                                     build=choice.build, budget=PREVIEW_MAX_SECONDS)
         if value is None:
             self.log(f"[pokemon] lineup: FALLBACK to code lineup {rec}")
             return WithReasoning(rec, "Lineup chosen for the matchup.")
-        self.log(f"[pokemon] lineup: bring {value['bring']} lead {value['leads']} (code: {rec['bring']} / {rec['leads']})")
+        self.log(f"[pokemon] lineup: bring {value['bring']} lead {value['leads']} (code: {rec['bring']} / {rec['leads']}) | {ans.get('analysis', '')}")
         return WithReasoning(value, str(ans.get("reasoning_summary") or "")[:200])
 
     # -- battle turns ----------------------------------------------------------------
@@ -205,13 +212,13 @@ class PokemonPlayer:
                     for i, s in enumerate(analysis.slots)
                 ],
                 "targets_legend": "1/2 = opponent positions A/B; -1 = your slot 0, -2 = your slot 1; null = no target needed",
-                "code_recommendation": plan,
+                "code_baseline": plan,
                 "answer_format": "For slot_0 and slot_1 give the option index from that slot's options and, for a move "
                                  "with targets, one of its listed target integers (else null).",
             }
             slot_schema = object_schema({"option": {"type": "integer"}, "target": {"type": ["integer", "null"]}})
             result, ans = self.brain.ask(kind="doubles_turn", system=SYSTEM, payload=payload,
-                                         schema=object_schema({"slot_0": slot_schema, "slot_1": slot_schema,
+                                         schema=object_schema({"analysis": {"type": "string"}, "slot_0": slot_schema, "slot_1": slot_schema,
                                                                "reasoning_summary": {"type": "string"}}),
                                          build=choice.build, budget=budget)
         else:
@@ -223,5 +230,5 @@ class PokemonPlayer:
             return WithReasoning(plan_action, "Playing the highest-value line.")
         analysis.remember(result)
         same = result == plan_action
-        self.log(f"[pokemon] turn {analysis.turn}: {result['slot_0']} | {result['slot_1']} ({'= code plan' if same else 'model overrode code plan'})")
+        self.log(f"[pokemon] turn {analysis.turn}: {result['slot_0']} | {result['slot_1']} ({'= code plan' if same else 'model overrode code plan'}) | {ans.get('analysis', '')}")
         return WithReasoning(result, str(ans.get("reasoning_summary") or "")[:200])

@@ -119,11 +119,11 @@ MY6 = ["incineroar", "garchomp", "fluttermane", "amoonguss", "tornadus", "kingam
 OPP6 = ["rillaboom", "urshifurapidstrike", "gholdengo", "dragonite", "rotomwash", "torkoal"]
 
 
-def test_lineup_uses_model_answer_and_code_recommendation_is_valid():
+def test_lineup_uses_model_answer_and_code_baseline_is_valid():
     seen = {}
 
     def answer(payload, name, schema):
-        seen["rec"] = payload["code_recommendation"]
+        seen["rec"] = payload["code_baseline"]
         return {"bring": MY6[:4], "leads": MY6[2:4], "reasoning_summary": "Good matchup."}
 
     agent, _, _ = make_agent(answer)
@@ -182,11 +182,11 @@ def test_turn_code_plan_is_sensible_and_model_sees_damage_numbers():
 
     def answer(payload, name, schema):
         seen["payload"] = payload
-        return {**payload["code_recommendation"], "reasoning_summary": "Follow the plan."} | {
-            "slot_0": payload["code_recommendation"]["slot_0"], "slot_1": payload["code_recommendation"]["slot_1"]}
+        return {**payload["code_baseline"], "reasoning_summary": "Follow the plan."} | {
+            "slot_0": payload["code_baseline"]["slot_0"], "slot_1": payload["code_baseline"]["slot_1"]}
 
-    agent, _, _ = make_agent(lambda p, n, s: {"slot_0": p["code_recommendation"]["slot_0"],
-                                              "slot_1": p["code_recommendation"]["slot_1"],
+    agent, _, _ = make_agent(lambda p, n, s: {"slot_0": p["code_baseline"]["slot_0"],
+                                              "slot_1": p["code_baseline"]["slot_1"],
                                               "reasoning_summary": "Plan."} if not seen.update(payload=p) else None)
     agent.choose_action(draft_state(), POKEMON)  # learn the sets
     decision = unwrap(agent.choose_action(turn_state(), POKEMON))
@@ -205,8 +205,8 @@ def test_turn_code_plan_is_sensible_and_model_sees_damage_numbers():
 
 def test_fake_out_is_marked_as_failing_after_first_turn():
     seen = []
-    agent, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"slot_0": p["code_recommendation"]["slot_0"],
-                                                                "slot_1": p["code_recommendation"]["slot_1"],
+    agent, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"slot_0": p["code_baseline"]["slot_0"],
+                                                                "slot_1": p["code_baseline"]["slot_1"],
                                                                 "reasoning_summary": "x"})
     agent.choose_action(turn_state(turn=1), POKEMON)
     agent.choose_action(turn_state(turn=2), POKEMON)
@@ -277,7 +277,7 @@ def test_villager_vote_uses_model_and_code_suspicion_from_record():
     assert facts["votes_for_later_revealed_villagers"]["P1"] == 1
     assert facts["parity"]["wolves_left"] == 2
     # Fallback (code) suggestion should be one of the players who voted out a villager, never abstain.
-    assert seen["p"]["code_suggestion"] in {"1", "2", "5"}
+    assert seen["p"]["code_baseline_from_vote_record"] in {"1", "2", "5"}
 
 
 def test_seer_reads_its_checks_and_votes_known_wolf_on_fallback():
