@@ -386,3 +386,10 @@ def test_non_wolf_messages_are_always_public():
     agent, _, _ = make_agent(lambda *_: {"decision": "send", "message": "I checked Player3: wolf.", "recipient": 3, "kill_target": None})
     m = agent.choose_message(ww_state(obs, phase="messaging"), WEREWOLF)
     assert isinstance(m, SendMessage) and not m.recipients
+
+
+def test_first_day_opening_forbids_silence_accusations():
+    seen = []
+    agent, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"decision": "send", "message": "Let's hear from the seer.", "recipient": None, "kill_target": None})
+    agent.choose_message(ww_state("Your role: VILLAGER\nDay 1, alive 7/7", phase="messaging", day=1), WEREWOLF)
+    assert "must NOT accuse anyone of being quiet" in seen[0]["instructions"]

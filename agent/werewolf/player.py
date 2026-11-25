@@ -175,7 +175,12 @@ class WerewolfPlayer:
             "private_to_ally": f"Send ONE private message to your wolf ally (recipient {living_allies[0] if living_allies else None}) proposing tonight's kill "
                                "target and which villager to push today. START the message with 'Kill P<seat>.' so the "
                                "target is unambiguous. Set recipient to your ally's seat and kill_target to that seat.",
-            "opening": "Send your opening public message for today (recipient null). Name one suspect and one concrete reason.",
+            "opening": ("Send your opening public message for today (recipient null). Name one suspect and one concrete "
+                        "reason taken from votes, deaths or claims." if self.t.votes or self.t.dead else
+                        "Send your opening public message (recipient null). It is the FIRST day: nobody has voted, died or had a "
+                        "chance to speak, so silence means nothing and you must NOT accuse anyone of being quiet. "
+                        "Seer with a wolf result: claim and name the wolf. Otherwise share a short plan for the village "
+                        "(e.g. ask for seer info, say you will judge people by their votes) and invite responses."),
             "reply": "New messages arrived. Reply publicly if it helps your team (answer accusations, back up or challenge a "
                      "claim, steer the vote). If nothing useful to add, choose 'end'.",
         }[mode]
