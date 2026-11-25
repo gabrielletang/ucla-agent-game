@@ -18,19 +18,25 @@ from .battle import TurnAnalysis
 from .calc import Mon, to_id
 from .draft import card_mon, matchup_matrix, profile, public, rank_draft, recommend_lineup, seconds_until
 
-SYSTEM = """You are a strong Pokémon VGC (Gen 9 doubles, level 50, no Terastallization) player controlling one side of a
+BASE = """You are a strong Pokémon VGC player (Gen 9 doubles, level 50, no Terastallization) controlling one side of a
 draft battle. Each request is one decision. The server's options are authoritative: pick only from them.
-Our code has pre-computed numbers for you (stats, type matchups, estimated damage as % of the target's CURRENT HP,
-likely KOs, speed estimates) and a recommended choice. Treat the numbers as good estimates, not certainties.
-Think like a VGC expert: focus fire to remove threats, respect speed order and priority, use Protect when a slot is
-the obvious target, use Fake Out only on a Pokémon's first turn out, never hit your own ally unless it is immune or
-the trade is clearly worth it, avoid wasting moves into immunities, keep win conditions alive.
-The code's numbers and its baseline choice IGNORE what the opponent will do this turn. That is your job:
-predict the opponent's most likely moves (Protect on a threatened slot, Fake Out, switching out of a bad matchup,
-priority moves, Trick Room/Tailwind turns, focus fire on your weaker slot) and choose the line that does best against
-that prediction. Agree with the baseline only when your own analysis lands there.
-Write `analysis` FIRST (max 60 words: what the opponent will likely do, and your plan), then the decision.
+Our code pre-computes numbers for you (stats, type matchups, estimated damage as % of the target's CURRENT HP,
+likely KOs, speed estimates) and a baseline choice. Treat the numbers as good estimates, not certainties.
+Only state facts that are in the payload; do not invent moves, abilities or items.
 reasoning_summary is PUBLIC (the opponent may read it): one short sentence, no secret plans."""
+
+DRAFT_SYSTEM = BASE + """
+This is TEAM BUILDING (draft / team preview), not a battle turn. Write `analysis` FIRST (max 50 words): what team plan
+you are building (e.g. Trick Room, Tailwind offense, weather, bulky balance), what the opponent seems to be building,
+and why your choice fits. code_score is a rough heuristic; agree with the baseline only when your plan lands there."""
+
+SYSTEM = BASE + """
+This is a BATTLE TURN. The code's numbers and baseline IGNORE what the opponent will do; that is your job.
+Predict the opponent's most likely moves (Protect on a threatened slot, switching out of a bad matchup, priority moves,
+Fake Out ONLY if `can_use_fake_out_this_turn` is true, focus fire on your weaker slot) and choose the line that does best
+against that prediction. Focus fire to remove threats, respect speed order, never hit your own ally unless it is immune.
+Write `analysis` FIRST (max 60 words: the opponent's likely moves, then your plan), then the decision.
+For each slot, `target` must be one of that option's `valid_targets` (use null when it is [null])."""
 
 DRAFT_SHORTLIST = 6
 SUPPORT_TAGS = {"redirection", "speed control (Tailwind)", "Trick Room", "sleep", "Intimidate", "Fake Out (flinch turn 1)"}
@@ -115,7 +121,7 @@ class PokemonPlayer:
         if budget < 2.5:
             self.log("[pokemon] draft: no time for the model, playing code pick")
             return WithReasoning(fallback, "Best available fit for the team.")
-        value, ans = self.brain.ask(kind="draft_pick", system=SYSTEM, payload=payload,
+        value, ans = self.brain.ask(kind="draft_pick", system=DRAFT_SYSTEM, payload=payload,
                                     schema=object_schema({"analysis": {"type": "string"},
                                                           "card_id": {"type": "string", "enum": ids},
                                                           "reasoning_summary": {"type": "string"}}),
@@ -171,7 +177,7 @@ class PokemonPlayer:
             "guidance": "Think about which 2 of their Pokémon they are most likely to lead with and pick leads that beat that.",
         }
         schema_species = {"type": "array", "items": {"type": "string", "enum": roster}}
-        value, ans = self.brain.ask(kind="select_lineup", system=SYSTEM, payload=payload,
+        value, ans = self.brain.ask(kind="select_lineup", system=DRAFT_SYSTEM, payload=payload,
                                     schema=object_schema({"analysis": {"type": "string"}, "bring": schema_species, "leads": schema_species,
                                                           "reasoning_summary": {"type": "string"}}),
                                     build=choice.build, budget=PREVIEW_MAX_SECONDS)
@@ -217,10 +223,21 @@ class PokemonPlayer:
                                  "with targets, one of its listed target integers (else null).",
             }
             slot_schema = object_schema({"option": {"type": "integer"}, "target": {"type": ["integer", "null"]}})
+            def build(ans):
+                value = choice.build(ans)
+                for i in (0, 1):
+                    pick = ans.get(f"slot_{i}") or {}
+                    rows = annotated[i] if i < len(annotated) else []
+                    row = next((r for r in rows if r["option"] == pick.get("option")), None)
+                    if row and row.get("value", 0) <= -0.45 and pick.get("option") != plan[f"slot_{i}"]["option"]:
+                        raise ValueError(f"slot_{i} option {pick.get('option')} is a known-bad move here "
+                                         f"({row.get('note') or 'it hits your own side or fails'}); pick another")
+                return value
+
             result, ans = self.brain.ask(kind="doubles_turn", system=SYSTEM, payload=payload,
                                          schema=object_schema({"analysis": {"type": "string"}, "slot_0": slot_schema, "slot_1": slot_schema,
                                                                "reasoning_summary": {"type": "string"}}),
-                                         build=choice.build, budget=budget)
+                                         build=build, budget=budget)
         else:
             self.log(f"[pokemon] turn: low on time (budget {budget:.1f}s), playing code plan")
         self.bank_spent += time.monotonic() - started

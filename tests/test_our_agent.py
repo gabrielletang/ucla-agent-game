@@ -362,3 +362,22 @@ def test_crash_in_our_code_still_returns_a_legal_move(monkeypatch):
     decision = unwrap(agent.choose_action(turn_state(), POKEMON))
     assert decision["type"] == "doubles_turn"
     assert any("ERROR" in l for l in lines)
+
+
+def test_model_choosing_a_failing_fake_out_is_sent_back():
+    calls = []
+
+    def answer(p, n, s):
+        calls.append(p)
+        if len(calls) == 2:  # turn 2, first try: Fake Out (fails after turn 1)
+            return {"analysis": "x", "slot_0": {"option": 0, "target": 1}, "slot_1": p["code_baseline"]["slot_1"], "reasoning_summary": "x"}
+        return {"analysis": "x", "slot_0": p["code_baseline"]["slot_0"], "slot_1": p["code_baseline"]["slot_1"], "reasoning_summary": "x"}
+
+    agent, provider, lines = make_agent(answer)
+    agent.choose_action(turn_state(turn=1), POKEMON)
+    decision = unwrap(agent.choose_action(turn_state(turn=2), POKEMON))
+    assert decision["slot_0"]["move_id"] != "fakeout"
+    assert any("known-bad" in l for l in lines)
+    assert all("valid_targets" in o for o in calls[0]["slots"][0]["options"])
+    foes = calls[1]["board"]["opponent_active"]
+    assert all(f["can_use_fake_out_this_turn"] is False for f in foes if f)

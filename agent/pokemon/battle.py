@@ -98,6 +98,13 @@ class TurnAnalysis:
         history = self.memory.setdefault("on_field", {})
         return history.get(slot, {}).get("species") != to_id(mon.name) or history.get(slot, {}).get("since") == self.turn
 
+    def foe_first_turn(self, idx: int) -> bool:
+        foe = self.foes[idx]
+        if foe is None:
+            return False
+        seen = self.memory.setdefault("foe_on_field", {}).get(idx)
+        return seen is None or seen.get("species") != to_id(foe.name) or seen.get("since") == self.turn
+
     def _target_mon(self, slot: int, target: int):
         if target in (1, 2):
             return "foe", self.foes[target - 1]
@@ -265,6 +272,7 @@ class TurnAnalysis:
                     row = self.evaluate_switch(number, opt, cards)
                 else:
                     row = {"value": -0.9 if len(slot.get("options") or []) > 1 else 0.0, "best_target": None}
+                row["valid_targets"] = list(opt.get("targets") or []) or [None]
                 rows.append({"option": index, "kind": kind, **row})
             out.append(rows)
         return out
@@ -315,7 +323,8 @@ class TurnAnalysis:
                             "boosts": {k: v for k, v in m.boosts.items() if v}, "types": m.types,
                             "item": m.item or None, "ability": m.ability or None,
                             "speed_estimate": int(m.stat("spe")),
-                            **({} if own else {"known_moves": m.moves[:4] or None})})
+                            **({} if own else {"known_moves": m.moves[:4] or None,
+                                               "can_use_fake_out_this_turn": ("fakeout" in m.moves) and self.foe_first_turn(mons.index(m))})})
             return out
         return {
             "turn": self.turn,
@@ -332,6 +341,10 @@ class TurnAnalysis:
         """Track first-turn-out (for Fake Out) and last moves (for Protect)."""
         on_field = self.memory.setdefault("on_field", {})
         last = self.memory.setdefault("last_moves", {})
+        foe_field = self.memory.setdefault("foe_on_field", {})
+        for idx, foe in enumerate(self.foes):
+            if foe is not None and foe_field.get(idx, {}).get("species") != to_id(foe.name):
+                foe_field[idx] = {"species": to_id(foe.name), "since": self.turn}
         for slot in (0, 1):
             m = self.mine[slot]
             if m is None:
