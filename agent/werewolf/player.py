@@ -184,6 +184,9 @@ class WerewolfPlayer:
             "reply": "New messages arrived. Reply publicly if it helps your team (answer accusations, back up or challenge a "
                      "claim, steer the vote). If nothing useful to add, choose 'end'.",
         }[mode]
+        if self.t.role == "seer" and "wolf" not in self.t.checks.values() and not (self.t.votes or self.t.dead):
+            instructions += (" You are the SEER but have only villager results so far: do NOT reveal that you are the seer "
+                             "today and do not mention your check. Talk like an ordinary villager.")
         payload = self._payload(state, "message", {
             "mode": mode,
             "instructions": instructions + f" Max {MESSAGE_WORDS - 5} words.",

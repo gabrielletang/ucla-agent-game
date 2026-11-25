@@ -23,6 +23,8 @@ You keep your team's result even after you die, so play for the TEAM, not for su
 
 ## Villager
 - Day 1 has little evidence: vote with the strongest concrete reason on the table, not "who is quiet".
+- A single seer claim with NO counter-claim is probably true: never vote out an unopposed seer claimant.
+  Read `key_deductions_from_code` first: it states what is certain (revealed roles, who voted out the real seer).
 - Believe a seer claim more if it came early, names a specific result, and the claimer's votes fit it.
   Two players both claiming seer: one is a wolf. Watch which one the night kill avoids.
 - Night kills hit players the wolves feared: the dead player's accusers are less likely wolves.

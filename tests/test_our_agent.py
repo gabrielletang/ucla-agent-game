@@ -393,3 +393,18 @@ def test_first_day_opening_forbids_silence_accusations():
     agent, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"decision": "send", "message": "Let's hear from the seer.", "recipient": None, "kill_target": None})
     agent.choose_message(ww_state("Your role: VILLAGER\nDay 1, alive 7/7", phase="messaging", day=1), WEREWOLF)
     assert "must NOT accuse anyone of being quiet" in seen[0]["instructions"]
+
+
+def test_deductions_flag_voters_of_the_real_seer_and_hide_seer_on_day1():
+    dead = [{"day": 1, "player": "Player1", "role": "seer", "cause": "vote"}]
+    votes = [{"day": 1, "votes": {"Player2": "Player1", "Player5": "Player1", "Player3": "Player0"}}]
+    seen = []
+    agent, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"analysis": "x", "action_id": "2", "reasoning_summary": "x"})
+    alive = [0, 2, 3, 4, 5, 6]
+    agent.choose_action(ww_state("Your role: VILLAGER\nDay 2", legal=vote_options(alive), alive=alive, dead=dead, votes=votes), WEREWOLF)
+    ded = " ".join(seen[0]["facts"]["key_deductions_from_code"])
+    assert "REAL seer" in ded and "P2, P5" in ded
+    seen.clear()
+    agent2, _, _ = make_agent(lambda p, n, s: seen.append(p) or {"decision": "send", "message": "hi", "recipient": None, "kill_target": None})
+    agent2.choose_message(ww_state("Your role: SEER\nInvestigation: Player4 is a VILLAGER\nDay 1", phase="messaging", day=1), WEREWOLF)
+    assert "do NOT reveal that you are the seer" in seen[0]["instructions"]

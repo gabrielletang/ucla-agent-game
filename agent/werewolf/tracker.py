@@ -195,7 +195,9 @@ class Tracker:
             if v["voter"] not in score or v["target"] is None:
                 continue
             role = rev.get(v["target"])
-            if role in ("villager", "seer"):
+            if role == "seer":
+                score[v["voter"]] += 2.0
+            elif role == "villager":
                 score[v["voter"]] += 1.0
             elif role == "wolf":
                 score[v["voter"]] -= 1.2
@@ -223,6 +225,7 @@ class Tracker:
             vote_lines[v["day"]].append(f"P{v['voter']}->{'abstain' if v['target'] is None else 'P' + str(v['target'])}")
         susp = self.suspicion()
         return {
+            "key_deductions_from_code": self.deductions(),
             "me": self.me,
             "my_role": self.role,
             "my_wolf_allies": sorted(self.allies) if self.role == "wolf" else None,
@@ -237,6 +240,28 @@ class Tracker:
             "code_suspicion_ranking": [f"P{s} ({round(v, 1)})" for s, v in sorted(susp.items(), key=lambda kv: -kv[1])],
             "votes_for_later_revealed_villagers": {f"P{s}": sum(1 for v in self.votes if v["voter"] == s and rev.get(v["target"]) in ("villager", "seer")) for s in self.alive if s != self.me},
         }
+
+    def deductions(self) -> list[str]:
+        """Plain-language conclusions that follow for certain from the public record."""
+        rev = self.revealed()
+        out = []
+        for seat, role in rev.items():
+            out.append(f"P{seat} is DEAD and was really a {str(role).upper()} (revealed). Dead players cannot be voted; "
+                       f"do not discuss them as suspects.")
+            if role == "seer":
+                voters = sorted({v['voter'] for v in self.votes if v['target'] == seat and v['voter'] in self.alive})
+                if voters:
+                    out.append(f"P{seat} was the REAL seer, so their claims and checks were TRUE. Living players who voted "
+                               f"to eliminate the real seer: {', '.join('P' + str(x) for x in voters)} — strong wolf suspects.")
+                for s2, claims in self.claims.items():
+                    if s2 != seat and s2 in self.alive and claims:
+                        out.append(f"P{s2} also claimed seer, but the real seer was P{seat}: P{s2} LIED and is almost surely a wolf.")
+        living_claims = [s2 for s2, c in self.claims.items() if c and s2 in self.alive]
+        if len(living_claims) == 1 and not any(r == "seer" for r in rev.values()):
+            out.append(f"P{living_claims[0]} is the ONLY seer claimant and nobody counter-claimed: the claim is probably TRUE. "
+                       f"Do not vote them out; wolves benefit from killing the seer.")
+        out.append(f"Wolves still alive: {self.wolves_left()} of {self.start_wolves}.")
+        return out
 
     def transcript(self, limit: int = 40) -> list[dict]:
         return [{"day": m["day"], "from": f"P{m['from']}", "to": "everyone" if m["to"] == "everyone" else [f"P{r}" for r in m["to"]],
